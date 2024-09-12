@@ -2,6 +2,8 @@
 
 A wrapper around [oidc-client-ts](https://www.npmjs.com/package/oidc-client-ts)
 
+NOTE: in order for this module to work in plain HTTP contexts, the `oidc-client-ts` version has been set to 2.4.0
+
 ## Usage
 
 ### With Vue.js
