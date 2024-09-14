@@ -1,4 +1,4 @@
-import { User, UserManager, UserManagerSettings } from "oidc-client-ts"
+import { User, UserManager, type UserManagerSettings } from "oidc-client-ts"
 
 type Options = Omit<UserManagerSettings, "redirect_uri"> & {
   redirect_uri?: string
