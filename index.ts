@@ -1,9 +1,13 @@
 import { User, UserManager, UserManagerSettings } from "oidc-client-ts"
 
+type Options = Omit<UserManagerSettings, "redirect_uri"> & {
+  redirect_uri?: string
+}
+
 export default class {
   userManager: UserManager
 
-  constructor(options: UserManagerSettings) {
+  constructor(options: Options) {
     const {
       redirect_uri = `${window.location.origin}?href=${window.location.href}`,
       ...rest
@@ -16,13 +20,14 @@ export default class {
   }
 
   init() {
-    return new Promise<User | void | null>(async (resolve) => {
+    return new Promise<User | void | null>(async (resolve, reject) => {
       // Just proceed if user is already available
       const user = await this.userManager.getUser()
       if (user) return resolve(user)
 
       try {
         const user = await this.userManager.signinCallback()
+        if (!user) return reject("User is not logged in")
 
         // Restore original URL from href provided in redirect_uri
         // TODO: Check if this is a good approach
