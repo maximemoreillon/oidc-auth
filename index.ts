@@ -1,25 +1,17 @@
-import { User, UserManager } from "oidc-client-ts"
-
-type Options = {
-  client_id: string
-  authority: string
-  redirect_uri?: string
-}
+import { User, UserManager, UserManagerSettings } from "oidc-client-ts"
 
 export default class {
   userManager: UserManager
 
-  constructor(options: Options) {
+  constructor(options: UserManagerSettings) {
     const {
-      client_id,
-      authority,
       redirect_uri = `${window.location.origin}?href=${window.location.href}`,
+      ...rest
     } = options
 
     this.userManager = new UserManager({
       redirect_uri,
-      client_id,
-      authority,
+      ...rest,
     })
   }
 
