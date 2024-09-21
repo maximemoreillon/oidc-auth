@@ -34,10 +34,9 @@ export default class {
         // PROBLEM: Vue router messes this up
         const { searchParams } = new URL(window.location.href)
         const originalHref = searchParams.get("href")
-        // history.replaceState({}, "", originalHref)
-        history.pushState({}, "", originalHref)
 
-        return resolve(user)
+        if (originalHref) window.location.href = originalHref
+        else resolve(user)
       } catch (error) {
         console.warn(error)
         this.userManager.signinRedirect()
