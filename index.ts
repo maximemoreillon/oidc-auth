@@ -23,7 +23,10 @@ export default class {
     return new Promise<User | void | null>(async (resolve, reject) => {
       // Just proceed if user is already available
       const user = await this.userManager.getUser()
-      if (user) return resolve(user)
+      if (user) {
+        if (user.expired) return this.userManager.signinRedirect()
+        return resolve(user)
+      }
 
       try {
         const user = await this.userManager.signinCallback()
@@ -31,7 +34,6 @@ export default class {
 
         // Restore original URL from href provided in redirect_uri
         // TODO: Check if this is a good approach
-        // PROBLEM: Vue router messes this up
         const { searchParams } = new URL(window.location.href)
         const originalHref = searchParams.get("href")
 
