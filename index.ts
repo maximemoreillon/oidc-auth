@@ -21,10 +21,13 @@ export default class {
 
   init() {
     return new Promise<User | void | null>(async (resolve, reject) => {
-      // Just proceed if user is already available
+      // Just proceed if user is already available (and not expired)
       const user = await this.userManager.getUser()
       if (user) {
-        if (user.expired) return this.userManager.signinRedirect()
+        const { expires_at } = user
+        const now = new Date().getTime() / 1000
+        if (user.expired || (expires_at && now > expires_at))
+          return this.userManager.signinRedirect()
         return resolve(user)
       }
 
