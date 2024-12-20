@@ -43,7 +43,7 @@ export default class {
         if (originalHref) window.location.href = originalHref
         else resolve(user)
       } catch (error) {
-        console.warn(error)
+        console.error(error)
         this.userManager.signinRedirect()
         return resolve(null)
       }
