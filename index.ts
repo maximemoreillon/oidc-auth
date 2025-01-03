@@ -22,6 +22,13 @@ type OidcConfig = {
   userinfo_endpoint: string
 }
 
+/* 
+This is a class because
+- It allows to get user info
+- It will provide event listeners in the future
+
+*/
+
 export default class {
   options: Options
   openidConfig?: OidcConfig
@@ -33,26 +40,23 @@ export default class {
     } = options
 
     this.options = { redirect_uri, ...rest }
-
-    this.init()
   }
 
   async init() {
     this.openidConfig = await this.getOidcConfig()
 
     const user = await this.getUser()
-
     if (user) return user
 
     const currentUrl = new URL(window.location.href)
     const code = currentUrl.searchParams.get("code")
     const href = currentUrl.searchParams.get("href")
 
-    // No access token, no code, redirect to login page
     if (code) {
       await this.getToken(code)
       if (href) window.location.href = href
     } else {
+      // No access token, no code, redirect to login page
       const authUrl = await this.generateAuthUrl()
       window.location.href = authUrl
     }
@@ -73,6 +77,7 @@ export default class {
   }
 
   generateRandomString(length: number) {
+    // Provided by ChatGPT
     const charset =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
     let randomString = ""
@@ -123,6 +128,7 @@ export default class {
     authUrl.searchParams.append("code_challenge", challenge)
     authUrl.searchParams.append("redirect_uri", redirect_uri)
 
+    // Additional searchParams such as audience for Auth0
     Object.keys(this.options.extraQueryParams).forEach((key) => {
       authUrl.searchParams.append(key, this.options.extraQueryParams[key])
     })
@@ -158,23 +164,32 @@ export default class {
     }
 
     const response = await fetch(token_endpoint, options)
+    // TODO: check that request was succesful
 
-    // TODO: check that requerst was succesful
-    const { access_token } = await response.json()
+    document.cookie = `verifier=; expires=Thu, 01 Jan 1970 00:00:00 UTC;`
+
+    const data = await response.json()
+    console.log(data)
+    const { access_token, refresh_token } = data
+
+    // NOTE: Expiry is also available, but not useful here because also needed when the user is already logged in
+
     if (!access_token) throw new Error("No access token")
 
-    // TODO: save cookies
-
+    // TODO: add expiry
     document.cookie = `access_token=${access_token}`
+
+    // TODO: figure out how to use the refresh token
+    if (refresh_token) document.cookie = `refresh_token=${refresh_token}`
   }
 
   async getUser() {
+    // Currently returns undefined if user cannot be queried
     if (!this.openidConfig) throw new Error("OpenID config not available")
+    const { userinfo_endpoint } = this.openidConfig
 
     const access_token = this.getCookie("access_token")
     if (!access_token) return
-
-    const { userinfo_endpoint } = this.openidConfig
 
     const options: RequestInit = {
       headers: {
@@ -183,6 +198,7 @@ export default class {
     }
 
     const response = await fetch(userinfo_endpoint, options)
+    if (response.status !== 200) return
 
     return await response.json()
   }

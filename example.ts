@@ -11,3 +11,13 @@ const oidcClient = new OidcClient({
     audience: VITE_OIDC_AUDIENCE,
   },
 })
+
+async function main() {
+  await oidcClient.init()
+  const userInfo = await oidcClient.getUser()
+
+  const userInfoEl = document.getElementById("userInfo")
+  if (userInfoEl) userInfoEl.innerText = JSON.stringify(userInfo, null, 2)
+}
+
+main()
