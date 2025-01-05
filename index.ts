@@ -138,6 +138,14 @@ export default class {
     return authUrl.toString()
   }
 
+  makeExpiryDate(expires_in: number) {
+    const expiryDate = new Date()
+    const time = expiryDate.getTime()
+    const expiryTime = time + 1000 * expires_in
+    expiryDate.setTime(expiryTime)
+    return expiryDate
+  }
+
   async getToken(code: string) {
     if (!this.openidConfig) throw new Error("OpenID config not available")
 
@@ -166,18 +174,19 @@ export default class {
     const response = await fetch(token_endpoint, options)
     // TODO: check that request was succesful
 
+    // Delete verifier cookie by setting "expires" to past date
     document.cookie = `verifier=; expires=Thu, 01 Jan 1970 00:00:00 UTC;`
 
-    const data = await response.json()
-    console.log(data)
-    const { access_token, refresh_token } = data
-
-    // NOTE: Expiry is also available, but not useful here because also needed when the user is already logged in
+    const { access_token, refresh_token, expires_in } = await response.json()
+    // expires_in is in seconds
 
     if (!access_token) throw new Error("No access token")
 
-    // TODO: add expiry
-    document.cookie = `access_token=${access_token}`
+    const expiryDate = this.makeExpiryDate(expires_in)
+
+    document.cookie = `access_token=${access_token}; expires=${expiryDate.toUTCString()}; path=/`
+
+    // TODO: store expiryDate as cookie because cannot be retrieved otherwise
 
     // TODO: figure out how to use the refresh token
     if (refresh_token) document.cookie = `refresh_token=${refresh_token}`
