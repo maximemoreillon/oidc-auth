@@ -1,3 +1,5 @@
+import CryptoJS from "crypto-js"
+
 type UserOptions = {
   authority: string
   client_id: string
@@ -34,35 +36,41 @@ export default class {
   openidConfig?: OidcConfig
 
   constructor(options: UserOptions) {
-    const {
-      redirect_uri = `${window.location.origin}?href=${window.location.href}`,
-      ...rest
-    } = options
+    const { redirect_uri = window.location.origin, ...rest } = options
 
-    this.options = { redirect_uri, ...rest }
+    this.options = {
+      redirect_uri,
+      ...rest,
+    }
   }
 
   async init() {
     this.openidConfig = await this.getOidcConfig()
-    this.createTimeoutForTokenExpiry()
 
+    this.createTimeoutForTokenExpiry()
     const user = await this.getUser()
     if (user) return user
 
     const currentUrl = new URL(window.location.href)
     const code = currentUrl.searchParams.get("code")
-    const href = currentUrl.searchParams.get("href")
-
-    console.log({ href })
 
     if (code) {
-      console.log({ code })
       await this.getToken(code)
-      if (href) window.location.href = href
-      // What happens if we get here?
+      const href = this.getCookie("href")
+
+      if (href) {
+        this.removeCookie("href")
+        window.location.href = href
+      } else {
+        window.location.href = this.options.redirect_uri
+      }
     } else {
-      // No access token, no code, redirect to login page
+      // No access token, no code => redirect to login page
       const authUrl = await this.generateAuthUrl()
+
+      // Keep track of where the user was going
+      document.cookie = `href=${window.location.href}`
+
       window.location.href = authUrl
     }
   }
@@ -81,17 +89,14 @@ export default class {
       ?.split("=")[1]
   }
 
-  generateRandomString(length: number) {
-    // Provided by ChatGPT
-    const charset =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
-    let randomString = ""
-    const randomValues = new Uint8Array(length)
-    window.crypto.getRandomValues(randomValues)
-    for (let i = 0; i < randomValues.length; i++) {
-      randomString += charset.charAt(randomValues[i] % charset.length)
-    }
-    return randomString
+  removeCookie(key: string) {
+    document.cookie = `${key}=; expires=Thu, 01 Jan 1970 00:00:00 UTC;`
+  }
+
+  generateCodeVerifier(length: number) {
+    const array = new Uint8Array(length)
+    crypto.getRandomValues(array)
+    return Array.from(array, (byte) => (byte % 36).toString(36)).join("")
   }
 
   base64UrlEncode(arrayBuffer: ArrayBuffer) {
@@ -102,15 +107,20 @@ export default class {
   }
 
   async generatePkceChallenge(verifier: string) {
-    const encoder = new TextEncoder()
-    const data = encoder.encode(verifier)
-    const digest = await crypto.subtle.digest("SHA-256", data)
-    return this.base64UrlEncode(digest)
+    // Crypto module not available in insecure contexts, replaced with CryptoJS
+    // const encoder = new TextEncoder()
+    // const data = encoder.encode(verifier)
+    // const digest = await crypto.subtle.digest("SHA-256", data)
+    // return this.baseconst hash = CryptoJS.SHA256(verifier); // Hash the verifier
+    const hash = CryptoJS.SHA256(verifier) // Hash the verifier
+    const base64 = CryptoJS.enc.Base64.stringify(hash) // Encode as Base64
+    return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") // Convert to URL-safe64UrlEncode(digest)
   }
 
   async createPkcePair() {
-    const verifier = this.generateRandomString(128)
+    const verifier = this.generateCodeVerifier(128)
     const challenge = await this.generatePkceChallenge(verifier)
+
     return {
       verifier,
       challenge,
@@ -152,7 +162,7 @@ export default class {
 
     setTimeout(() => {
       this.refreshAccessToken()
-    }, 3000)
+    }, timeLeft)
   }
 
   makeExpiryDate(expires_in: number) {
@@ -196,7 +206,7 @@ export default class {
     }
 
     // Delete verifier cookie by setting "expires" to past date
-    document.cookie = `verifier=; expires=Thu, 01 Jan 1970 00:00:00 UTC;`
+    this.removeCookie("verifier")
 
     const data = await response.json()
 
@@ -231,7 +241,6 @@ export default class {
     // expires_in is in seconds
     const { access_token, refresh_token, expires_in } = data
     if (!access_token) throw new Error("No access token")
-    console.log("Saving new token")
     const expiryDate = this.makeExpiryDate(expires_in)
     document.cookie = `access_token=${access_token}; expires=${expiryDate.toUTCString()}; path=/`
     document.cookie = `expiry=${expiryDate.toUTCString()}`
