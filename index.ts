@@ -44,6 +44,7 @@ export default class {
 
   async init() {
     this.openidConfig = await this.getOidcConfig()
+    this.createTimeoutForTokenExpiry()
 
     const user = await this.getUser()
     if (user) return user
@@ -52,9 +53,13 @@ export default class {
     const code = currentUrl.searchParams.get("code")
     const href = currentUrl.searchParams.get("href")
 
+    console.log({ href })
+
     if (code) {
+      console.log({ code })
       await this.getToken(code)
       if (href) window.location.href = href
+      // What happens if we get here?
     } else {
       // No access token, no code, redirect to login page
       const authUrl = await this.generateAuthUrl()
@@ -138,6 +143,18 @@ export default class {
     return authUrl.toString()
   }
 
+  createTimeoutForTokenExpiry() {
+    const expiry = this.getCookie("expiry")
+    if (!expiry) return
+
+    const expiryDate = new Date(expiry)
+    const timeLeft = expiryDate.getTime() - Date.now()
+
+    setTimeout(() => {
+      this.refreshAccessToken()
+    }, 3000)
+  }
+
   makeExpiryDate(expires_in: number) {
     const expiryDate = new Date()
     const time = expiryDate.getTime()
@@ -174,22 +191,16 @@ export default class {
     const response = await fetch(token_endpoint, options)
     // TODO: check that request was succesful
 
+    if (response.status !== 200) {
+      throw `Error getting token ${await response.text()}`
+    }
+
     // Delete verifier cookie by setting "expires" to past date
     document.cookie = `verifier=; expires=Thu, 01 Jan 1970 00:00:00 UTC;`
 
-    const { access_token, refresh_token, expires_in } = await response.json()
-    // expires_in is in seconds
+    const data = await response.json()
 
-    if (!access_token) throw new Error("No access token")
-
-    const expiryDate = this.makeExpiryDate(expires_in)
-
-    document.cookie = `access_token=${access_token}; expires=${expiryDate.toUTCString()}; path=/`
-
-    // TODO: store expiryDate as cookie because cannot be retrieved otherwise
-
-    // TODO: figure out how to use the refresh token
-    if (refresh_token) document.cookie = `refresh_token=${refresh_token}`
+    this.saveTokens(data)
   }
 
   async getUser() {
@@ -210,5 +221,52 @@ export default class {
     if (response.status !== 200) return
 
     return await response.json()
+  }
+
+  saveTokens(data: {
+    access_token: string
+    refresh_token: string
+    expires_in: number
+  }) {
+    // expires_in is in seconds
+    const { access_token, refresh_token, expires_in } = data
+    if (!access_token) throw new Error("No access token")
+    console.log("Saving new token")
+    const expiryDate = this.makeExpiryDate(expires_in)
+    document.cookie = `access_token=${access_token}; expires=${expiryDate.toUTCString()}; path=/`
+    document.cookie = `expiry=${expiryDate.toUTCString()}`
+    if (refresh_token) document.cookie = `refresh_token=${refresh_token}`
+  }
+
+  async refreshAccessToken() {
+    if (!this.openidConfig) throw new Error("OpenID config not available")
+
+    const refresh_token = this.getCookie("refresh_token")
+    if (!refresh_token) throw new Error("No refresh token")
+
+    const { token_endpoint } = this.openidConfig
+    const { client_id } = this.options
+
+    const body = new URLSearchParams({
+      client_id,
+      grant_type: "refresh_token",
+      refresh_token,
+    })
+
+    const options: RequestInit = {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body,
+    }
+
+    const response = await fetch(token_endpoint, options)
+
+    const data = await response.json()
+
+    this.saveTokens(data)
+
+    this.createTimeoutForTokenExpiry()
   }
 }
