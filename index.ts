@@ -278,4 +278,7 @@ export default class {
 
     this.createTimeoutForTokenExpiry()
   }
+
+  // TODO: logout
+  // TODO: Token changed events
 }
