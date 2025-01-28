@@ -29,3 +29,7 @@ async function main() {
 }
 
 main()
+
+document.getElementById("logoutButton")?.addEventListener("click", async () => {
+  await oidcClient.logout()
+})

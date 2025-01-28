@@ -57,6 +57,7 @@ export default class {
     // WARNING: available does not mean valid
     const oidcCookie = getCookie("oidc")
     if (oidcCookie) {
+      // Checking if user data can be queried to confirm token is valid
       const user = await this.getUser()
       // NOTE: oidc-client-ts uses "profile" as key
       if (user) return { ...JSON.parse(oidcCookie), user }
@@ -67,22 +68,24 @@ export default class {
 
     if (code) {
       await this.exchangeCodeForToken(code)
-      const href = getCookie("href")
 
+      // Redirect user to page originally requested
+      const href = getCookie("href")
       if (href) {
         removeCookie("href")
         window.location.href = href
+        return
       } else {
         window.location.href = this.options.redirect_uri
+        return
       }
     } else {
-      // No access token, no code => redirect to login page
-      const authUrl = await this.generateAuthUrl()
+      // No access token (cookie), no code => redirect to login page
 
       // Keep track of where the user was going
       document.cookie = `href=${window.location.href}`
 
-      window.location.href = authUrl
+      window.location.href = await this.generateAuthUrl()
     }
   }
 
@@ -120,10 +123,14 @@ export default class {
   }
 
   createTimeoutForTokenExpiry() {
-    const expiry = getCookie("expiry")
-    if (!expiry) return
+    const oidcCookie = getCookie("oidc")
+    if (!oidcCookie) return
 
-    const expiryDate = new Date(expiry)
+    const { expires_at } = JSON.parse(oidcCookie)
+
+    if (!expires_at) throw new Error("Missing expires_at field in OIDC cookie")
+
+    const expiryDate = new Date(expires_at)
     const timeLeft = expiryDate.getTime() - Date.now()
 
     setTimeout(() => {
@@ -144,6 +151,8 @@ export default class {
   }) {
     const { expires_in } = data
     const expiryDate = this.makeExpiryDate(expires_in)
+
+    // Note: not setting any expiry because refresh token needed to refresh after expiry
     document.cookie = `oidc=${JSON.stringify({
       ...data,
       expires_at: expiryDate.toUTCString(),
@@ -185,11 +194,10 @@ export default class {
   }
 
   async getUser() {
-    // Currently returns undefined if user cannot be queried
+    // Currently returns null if user cannot be queried
     if (!this.openidConfig) throw new Error("OpenID config not available")
     const { userinfo_endpoint } = this.openidConfig
 
-    // const access_token = getCookie("access_token")
     const oidcCookie = getCookie("oidc")
     if (!oidcCookie) return null
 
@@ -204,8 +212,9 @@ export default class {
 
     const response = await fetch(userinfo_endpoint, options)
     if (!response.ok) {
+      // TODO: throw error or return null?
       console.error(`Error getting user info: ${await response.text()}`)
-      return
+      return null
     }
     return await response.json()
   }
@@ -257,9 +266,23 @@ export default class {
     this.refreshEventHandlers.forEach((handler) => handler(oidcData))
   }
 
-  logout() {
+  async logout() {
     if (!this.openidConfig) throw new Error("OpenID config not available")
     const { end_session_endpoint } = this.openidConfig
-    // TODO: implement logout
+    // const oidcCookie = getCookie("oidc")
+    // if (!oidcCookie) throw new Error("No OIDC cookie")
+
+    // const { id_token } = JSON.parse(oidcCookie)
+    // const { client_id } = this.options
+
+    const logoutUrl = new URL(end_session_endpoint)
+
+    // logoutUrl.searchParams.append("client_id", client_id)
+    // logoutUrl.searchParams.append(
+    //   "post_logout_redirect_uri ",
+    //   this.options.redirect_uri
+    // )
+
+    window.location.href = logoutUrl.toString()
   }
 }
