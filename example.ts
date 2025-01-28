@@ -14,11 +14,18 @@ const oidcClient = new OidcClient({
 })
 
 async function main() {
-  await oidcClient.init()
-  const userInfo = await oidcClient.getUser()
+  const result = await oidcClient.init()
+  if (!result) return
+  const { user } = result
+  //  await oidcClient.getUser()
 
   const userInfoEl = document.getElementById("userInfo")
-  if (userInfoEl) userInfoEl.innerText = JSON.stringify(userInfo, null, 2)
+  if (userInfoEl) userInfoEl.innerText = JSON.stringify(user, null, 2)
+
+  oidcClient.onTokenRefreshed((oidcData) => {
+    console.log("Token refreshed")
+    console.log(oidcData)
+  })
 }
 
 main()

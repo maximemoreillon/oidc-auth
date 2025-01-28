@@ -1,5 +1,5 @@
-import CryptoJS from "crypto-js"
-
+import { getCookie, removeCookie } from "./storage"
+import { createPkcePair } from "./pkce"
 type UserOptions = {
   authority: string
   client_id: string
@@ -22,18 +22,22 @@ type OidcConfig = {
   authorization_endpoint: string
   token_endpoint: string
   userinfo_endpoint: string
+  end_session_endpoint: string
 }
+
+type RefreshHandler = (oidcData: any) => void
 
 /* 
 This is a class because
 - It allows to get user info
 - It will provide event listeners in the future
-
+- It allows to logout (WIP)
 */
 
 export default class {
   options: Options
   openidConfig?: OidcConfig
+  refreshEventHandlers: Function[] = []
 
   constructor(options: UserOptions) {
     const { redirect_uri = window.location.origin, ...rest } = options
@@ -48,18 +52,25 @@ export default class {
     this.openidConfig = await this.getOidcConfig()
 
     this.createTimeoutForTokenExpiry()
-    const user = await this.getUser()
-    if (user) return user
+
+    // Check if OIDC cookie already available
+    // WARNING: available does not mean valid
+    const oidcCookie = getCookie("oidc")
+    if (oidcCookie) {
+      const user = await this.getUser()
+      // NOTE: oidc-client-ts uses "profile" as key
+      if (user) return { ...JSON.parse(oidcCookie), user }
+    }
 
     const currentUrl = new URL(window.location.href)
     const code = currentUrl.searchParams.get("code")
 
     if (code) {
-      await this.getToken(code)
-      const href = this.getCookie("href")
+      await this.exchangeCodeForToken(code)
+      const href = getCookie("href")
 
       if (href) {
-        this.removeCookie("href")
+        removeCookie("href")
         window.location.href = href
       } else {
         window.location.href = this.options.redirect_uri
@@ -82,55 +93,10 @@ export default class {
     return await response.json()
   }
 
-  getCookie(key: string) {
-    return document.cookie
-      .split("; ")
-      .find((row) => row.startsWith(`${key}=`))
-      ?.split("=")[1]
-  }
-
-  removeCookie(key: string) {
-    document.cookie = `${key}=; expires=Thu, 01 Jan 1970 00:00:00 UTC;`
-  }
-
-  generateCodeVerifier(length: number) {
-    const array = new Uint8Array(length)
-    crypto.getRandomValues(array)
-    return Array.from(array, (byte) => (byte % 36).toString(36)).join("")
-  }
-
-  base64UrlEncode(arrayBuffer: ArrayBuffer) {
-    return btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "")
-  }
-
-  async generatePkceChallenge(verifier: string) {
-    // Crypto module not available in insecure contexts, replaced with CryptoJS
-    // const encoder = new TextEncoder()
-    // const data = encoder.encode(verifier)
-    // const digest = await crypto.subtle.digest("SHA-256", data)
-    // return this.baseconst hash = CryptoJS.SHA256(verifier); // Hash the verifier
-    const hash = CryptoJS.SHA256(verifier) // Hash the verifier
-    const base64 = CryptoJS.enc.Base64.stringify(hash) // Encode as Base64
-    return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") // Convert to URL-safe64UrlEncode(digest)
-  }
-
-  async createPkcePair() {
-    const verifier = this.generateCodeVerifier(128)
-    const challenge = await this.generatePkceChallenge(verifier)
-
-    return {
-      verifier,
-      challenge,
-    }
-  }
-
   async generateAuthUrl() {
     if (!this.openidConfig) throw new Error("OpenID config not available")
 
-    const { verifier, challenge } = await this.createPkcePair()
+    const { verifier, challenge } = createPkcePair()
     const { client_id, redirect_uri } = this.options
     const { authorization_endpoint } = this.openidConfig
 
@@ -154,7 +120,7 @@ export default class {
   }
 
   createTimeoutForTokenExpiry() {
-    const expiry = this.getCookie("expiry")
+    const expiry = getCookie("expiry")
     if (!expiry) return
 
     const expiryDate = new Date(expiry)
@@ -173,13 +139,24 @@ export default class {
     return expiryDate
   }
 
-  async getToken(code: string) {
+  saveAuthData(data: {
+    expires_in: number // unit is seconds
+  }) {
+    const { expires_in } = data
+    const expiryDate = this.makeExpiryDate(expires_in)
+    document.cookie = `oidc=${JSON.stringify({
+      ...data,
+      expires_at: expiryDate.toUTCString(),
+    })}`
+  }
+
+  async exchangeCodeForToken(code: string) {
     if (!this.openidConfig) throw new Error("OpenID config not available")
 
     const { token_endpoint } = this.openidConfig
     const { redirect_uri, client_id } = this.options
 
-    const code_verifier = this.getCookie("verifier")
+    const code_verifier = getCookie("verifier")
     if (!code_verifier) throw new Error("Missing verifier")
 
     const body = new URLSearchParams({
@@ -199,18 +176,12 @@ export default class {
     }
 
     const response = await fetch(token_endpoint, options)
-    // TODO: check that request was succesful
+    if (!response.ok) throw `Error getting token ${await response.text()}`
 
-    if (response.status !== 200) {
-      throw `Error getting token ${await response.text()}`
-    }
-
-    // Delete verifier cookie by setting "expires" to past date
-    this.removeCookie("verifier")
+    removeCookie("verifier")
 
     const data = await response.json()
-
-    this.saveTokens(data)
+    this.saveAuthData(data)
   }
 
   async getUser() {
@@ -218,8 +189,12 @@ export default class {
     if (!this.openidConfig) throw new Error("OpenID config not available")
     const { userinfo_endpoint } = this.openidConfig
 
-    const access_token = this.getCookie("access_token")
-    if (!access_token) return
+    // const access_token = getCookie("access_token")
+    const oidcCookie = getCookie("oidc")
+    if (!oidcCookie) return null
+
+    const { access_token } = JSON.parse(oidcCookie)
+    if (!access_token) return null
 
     const options: RequestInit = {
       headers: {
@@ -228,29 +203,20 @@ export default class {
     }
 
     const response = await fetch(userinfo_endpoint, options)
-    if (response.status !== 200) return
-
+    if (!response.ok) {
+      console.error(`Error getting user info: ${await response.text()}`)
+      return
+    }
     return await response.json()
-  }
-
-  saveTokens(data: {
-    access_token: string
-    refresh_token: string
-    expires_in: number
-  }) {
-    // expires_in is in seconds
-    const { access_token, refresh_token, expires_in } = data
-    if (!access_token) throw new Error("No access token")
-    const expiryDate = this.makeExpiryDate(expires_in)
-    document.cookie = `access_token=${access_token}; expires=${expiryDate.toUTCString()}; path=/`
-    document.cookie = `expiry=${expiryDate.toUTCString()}`
-    if (refresh_token) document.cookie = `refresh_token=${refresh_token}`
   }
 
   async refreshAccessToken() {
     if (!this.openidConfig) throw new Error("OpenID config not available")
 
-    const refresh_token = this.getCookie("refresh_token")
+    const oidcCookie = getCookie("oidc")
+    if (!oidcCookie) throw new Error("No OIDC cookie")
+
+    const { refresh_token } = JSON.parse(oidcCookie)
     if (!refresh_token) throw new Error("No refresh token")
 
     const { token_endpoint } = this.openidConfig
@@ -271,14 +237,29 @@ export default class {
     }
 
     const response = await fetch(token_endpoint, options)
+    if (!response.ok) throw new Error("Error refreshing token")
 
     const data = await response.json()
 
-    this.saveTokens(data)
-
+    this.saveAuthData(data)
     this.createTimeoutForTokenExpiry()
+    this.runRefreshEventHandlers()
   }
 
-  // TODO: logout
-  // TODO: Token changed events
+  onTokenRefreshed(handler: RefreshHandler) {
+    this.refreshEventHandlers.push(handler)
+  }
+
+  runRefreshEventHandlers() {
+    const oidcCookie = getCookie("oidc")
+    if (!oidcCookie) return null
+    const oidcData = JSON.parse(oidcCookie)
+    this.refreshEventHandlers.forEach((handler) => handler(oidcData))
+  }
+
+  logout() {
+    if (!this.openidConfig) throw new Error("OpenID config not available")
+    const { end_session_endpoint } = this.openidConfig
+    // TODO: implement logout
+  }
 }
