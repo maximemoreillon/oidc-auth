@@ -6,8 +6,7 @@ type UserOptions = {
   client_id: string
   redirect_uri?: string
 
-  // TODO: typing
-  extraQueryParams?: any
+  extraQueryParams?: { [key: string]: string }
 }
 
 type Options = {
@@ -15,8 +14,7 @@ type Options = {
   client_id: string
   redirect_uri: string
 
-  // TODO: typing
-  extraQueryParams?: any
+  extraQueryParams?: { [key: string]: string }
 }
 
 type OidcConfig = {
@@ -27,6 +25,22 @@ type OidcConfig = {
 }
 
 type RefreshHandler = (oidcData: any) => void
+
+type User = {
+  name: string
+  email: string
+  family_name: string
+  given_name: string
+  [key: string]: unknown
+}
+
+type OidcData = {
+  access_token: string
+  refresh_token: string
+  expires_at: string
+  user: User
+  [key: string]: unknown
+}
 
 /* 
 This is a class because
@@ -49,7 +63,7 @@ export default class {
     }
   }
 
-  async init() {
+  async init(): Promise<OidcData | undefined> {
     this.openidConfig = await this.getOidcConfig()
 
     this.createTimeoutForTokenExpiry()
@@ -114,9 +128,13 @@ export default class {
     authUrl.searchParams.append("redirect_uri", redirect_uri)
 
     // Additional searchParams such as audience for Auth0
-    Object.keys(this.options.extraQueryParams).forEach((key) => {
-      authUrl.searchParams.append(key, this.options.extraQueryParams[key])
-    })
+    const { extraQueryParams } = this.options
+
+    if (extraQueryParams !== undefined) {
+      Object.keys(extraQueryParams).forEach((key) => {
+        authUrl.searchParams.append(key, extraQueryParams[key])
+      })
+    }
 
     document.cookie = `verifier=${verifier}`
 
@@ -287,3 +305,5 @@ export default class {
     window.location.href = logoutUrl.toString()
   }
 }
+
+export type { User, UserOptions as OidcOptions, OidcConfig }
