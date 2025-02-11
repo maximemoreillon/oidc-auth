@@ -24,10 +24,6 @@ async function main() {
   const result = await oidcClient.init()
   if (!result) return
   const { user } = result
-  //  await oidcClient.getUser()
-
-  const userInfoEl = document.getElementById("userInfo")
-  if (userInfoEl) userInfoEl.innerText = JSON.stringify(user, null, 2)
 
   oidcClient.onTokenRefreshed((oidcData) => {
     console.log("Token refreshed")
