@@ -1,5 +1,6 @@
 import { getCookie, removeCookie } from "./storage"
 import { createPkcePair } from "./pkce"
+
 type UserOptions = {
   authority: string
   client_id: string
@@ -54,7 +55,7 @@ export default class {
     this.createTimeoutForTokenExpiry()
 
     // Check if OIDC cookie already available
-    // WARNING: available does not mean valid
+    // WARNING: available does not mean valid: access token might be expired
     const oidcCookie = getCookie("oidc")
     if (oidcCookie) {
       // Checking if user data can be queried to confirm token is valid
