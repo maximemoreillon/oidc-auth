@@ -1,32 +1,28 @@
 import { getCookie, removeCookie } from "./storage"
 import { createPkcePair } from "./pkce"
 
-type UserOptions = {
+interface BaseOptions {
   authority: string
   client_id: string
-  redirect_uri?: string
-
   extraQueryParams?: { [key: string]: string }
 }
 
-type Options = {
-  authority: string
-  client_id: string
+interface Options extends BaseOptions {
   redirect_uri: string
-
-  extraQueryParams?: { [key: string]: string }
 }
 
-type OidcConfig = {
+interface UserOptions extends BaseOptions {
+  redirect_uri?: string
+}
+
+interface OidcConfig {
   authorization_endpoint: string
   token_endpoint: string
   userinfo_endpoint: string
   end_session_endpoint: string
 }
 
-type RefreshHandler = (oidcData: any) => void
-
-type User = {
+interface User {
   name: string
   email: string
   family_name: string
@@ -34,13 +30,15 @@ type User = {
   [key: string]: unknown
 }
 
-type OidcData = {
+interface OidcData {
   access_token: string
   refresh_token: string
   expires_at: string
   user: User
   [key: string]: unknown
 }
+
+type RefreshHandler = (oidcData: OidcData) => void
 
 /* 
 This is a class because
