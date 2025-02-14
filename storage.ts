@@ -1,10 +1,12 @@
 // TODO: saveCookie
 
 export function getCookie(key: string) {
-  return document.cookie
+  const foundRow = document.cookie
     .split("; ")
     .find((row) => row.startsWith(`${key}=`))
-    ?.split("=")[1]
+
+  if (foundRow) return foundRow.split("=")[1]
+  return null
 }
 
 export function removeCookie(key: string) {
