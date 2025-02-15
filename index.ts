@@ -48,6 +48,7 @@ This is a class because
 */
 
 export default class {
+  cookieName = "oidc"
   options: Options
   openidConfig?: OidcConfig
   refreshEventHandlers: Function[] = []
@@ -68,7 +69,7 @@ export default class {
 
     // Check if OIDC cookie already available
     // WARNING: available does not mean valid: access token might be expired
-    const oidcCookie = getCookie("oidc")
+    const oidcCookie = getCookie(this.cookieName)
     if (oidcCookie) {
       // Checking if user data can be queried to confirm token is valid
       const user = await this.getUser()
@@ -140,7 +141,7 @@ export default class {
   }
 
   createTimeoutForTokenExpiry() {
-    const oidcCookie = getCookie("oidc")
+    const oidcCookie = getCookie(this.cookieName)
     if (!oidcCookie) return
 
     const { expires_at } = JSON.parse(oidcCookie)
@@ -184,6 +185,7 @@ export default class {
 
     const code_verifier = getCookie("verifier")
     if (!code_verifier) throw new Error("Missing verifier")
+    removeCookie("verifier")
 
     const body = new URLSearchParams({
       code,
@@ -204,8 +206,6 @@ export default class {
     const response = await fetch(token_endpoint, options)
     if (!response.ok) throw `Error getting token ${await response.text()}`
 
-    removeCookie("verifier")
-
     const data = await response.json()
     this.saveAuthData(data)
   }
@@ -215,7 +215,7 @@ export default class {
     if (!this.openidConfig) throw new Error("OpenID config not available")
     const { userinfo_endpoint } = this.openidConfig
 
-    const oidcCookie = getCookie("oidc")
+    const oidcCookie = getCookie(this.cookieName)
     if (!oidcCookie) return null
 
     const { access_token } = JSON.parse(oidcCookie)
@@ -239,7 +239,7 @@ export default class {
   async refreshAccessToken() {
     if (!this.openidConfig) throw new Error("OpenID config not available")
 
-    const oidcCookie = getCookie("oidc")
+    const oidcCookie = getCookie(this.cookieName)
     if (!oidcCookie) throw new Error("No OIDC cookie")
 
     const { refresh_token } = JSON.parse(oidcCookie)
@@ -277,7 +277,7 @@ export default class {
   }
 
   runRefreshEventHandlers() {
-    const oidcCookie = getCookie("oidc")
+    const oidcCookie = getCookie(this.cookieName)
     if (!oidcCookie) return null
     const oidcData = JSON.parse(oidcCookie)
     this.refreshEventHandlers.forEach((handler) => handler(oidcData))
@@ -286,19 +286,16 @@ export default class {
   async logout() {
     if (!this.openidConfig) throw new Error("OpenID config not available")
     const { end_session_endpoint } = this.openidConfig
-    // const oidcCookie = getCookie("oidc")
-    // if (!oidcCookie) throw new Error("No OIDC cookie")
+    const oidcCookie = getCookie(this.cookieName)
+    if (!oidcCookie) throw new Error("No OIDC cookie")
 
-    // const { id_token } = JSON.parse(oidcCookie)
-    // const { client_id } = this.options
+    const { id_token } = JSON.parse(oidcCookie)
 
     const logoutUrl = new URL(end_session_endpoint)
 
-    // logoutUrl.searchParams.append("client_id", client_id)
-    // logoutUrl.searchParams.append(
-    //   "post_logout_redirect_uri ",
-    //   this.options.redirect_uri
-    // )
+    logoutUrl.searchParams.append("id_token_hint", id_token)
+
+    removeCookie(this.cookieName)
 
     window.location.href = logoutUrl.toString()
   }

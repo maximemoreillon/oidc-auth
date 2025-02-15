@@ -5,7 +5,7 @@ const { VITE_OIDC_AUTHORITY, VITE_OIDC_CLIENT_ID, VITE_OIDC_AUDIENCE } =
   import.meta.env
 
 const oidcClient = new OidcClient({
-  redirect_uri: `${window.location.origin}/callback`,
+  // redirect_uri: `${window.location.origin}/callback`,
   authority: VITE_OIDC_AUTHORITY,
   client_id: VITE_OIDC_CLIENT_ID,
   extraQueryParams: {
