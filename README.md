@@ -4,10 +4,10 @@ A simple class that enforces authentication using OpenID Connect / Oauth2.0
 
 ## Usage
 
-### With Vue.js
+### Example with Vue.js
 
 ```ts
-import OidcAuth from "@moreillon/oidc-auth"
+import OidcClient from "@moreillon/oidc-auth"
 
 const { VITE_APP_OIDC_AUTHORITY, VITE_APP_OIDC_CLIENT_ID } = import.meta.env
 
