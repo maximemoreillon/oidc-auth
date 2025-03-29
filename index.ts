@@ -65,8 +65,6 @@ export default class {
   async init(): Promise<OidcData | undefined> {
     this.openidConfig = await this.getOidcConfig()
 
-    this.createTimeoutForTokenExpiry()
-
     // Check if OIDC cookie already available
     // WARNING: available does not mean valid: access token might be expired
     const oidcCookie = getCookie(this.cookieName)
@@ -74,7 +72,10 @@ export default class {
       // Checking if user data can be queried to confirm token is valid
       const user = await this.getUser()
       // NOTE: oidc-client-ts uses "profile" as key
-      if (user) return { ...JSON.parse(oidcCookie), user }
+      if (user) {
+        this.createTimeoutForTokenExpiry()
+        return { ...JSON.parse(oidcCookie), user }
+      }
     }
 
     const currentUrl = new URL(window.location.href)
