@@ -82,16 +82,22 @@ export default class {
     const code = currentUrl.searchParams.get("code")
 
     if (code) {
-      await this.exchangeCodeForToken(code)
+      try {
+        await this.exchangeCodeForToken(code)
 
-      // Redirect user to page originally requested
-      const href = getCookie("href")
-      if (href) {
-        removeCookie("href")
-        window.location.href = href
-        return
-      } else {
-        window.location.href = this.options.redirect_uri
+        // Redirect user to page originally requested
+        const href = getCookie("href")
+        if (href) {
+          removeCookie("href")
+          window.location.href = href
+          return
+        } else {
+          window.location.href = this.options.redirect_uri
+          return
+        }
+      } catch (error) {
+        console.error(error)
+        window.location.href = await this.generateAuthUrl()
         return
       }
     } else {
