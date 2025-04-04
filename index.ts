@@ -100,14 +100,14 @@ export default class {
         window.location.href = await this.generateAuthUrl()
         return
       }
-    } else {
-      // No access token (cookie), no code => redirect to login page
-
-      // Keep track of where the user was going
-      document.cookie = `href=${window.location.href}`
-
-      window.location.href = await this.generateAuthUrl()
     }
+
+    // No access token (cookie), no user => redirect to login page
+
+    // Keep track of where the user was going
+    document.cookie = `href=${window.location.href}`
+
+    window.location.href = await this.generateAuthUrl()
   }
 
   async getOidcConfig() {
