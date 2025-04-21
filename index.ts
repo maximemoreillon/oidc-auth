@@ -65,19 +65,6 @@ export default class {
   async init(): Promise<OidcData | undefined> {
     this.openidConfig = await this.getOidcConfig()
 
-    // Check if OIDC cookie already available
-    // WARNING: available does not mean valid: access token might be expired
-    const oidcCookie = getCookie(this.cookieName)
-    if (oidcCookie) {
-      // Checking if user data can be queried to confirm token is valid
-      const user = await this.getUser()
-      // NOTE: oidc-client-ts uses "profile" as key
-      if (user) {
-        this.createTimeoutForTokenExpiry()
-        return { ...JSON.parse(oidcCookie), user }
-      }
-    }
-
     const currentUrl = new URL(window.location.href)
     const code = currentUrl.searchParams.get("code")
 
@@ -102,10 +89,34 @@ export default class {
       }
     }
 
-    // No access token (cookie), no user => redirect to login page
-
+    // TODO: Is this really a good idea to have this here?
     // Keep track of where the user was going
     document.cookie = `href=${window.location.href}`
+
+    // Check if OIDC cookie already available
+    // WARNING: available does not mean valid: access token might be expired
+    const oidcCookie = getCookie(this.cookieName)
+
+    if (oidcCookie) {
+      // TODO: have this here or in getUser()?
+      if (this.isExpired(JSON.parse(oidcCookie).expires_at)) {
+        try {
+          await this.refreshAccessToken()
+        } catch (error) {
+          console.error(error)
+          window.location.href = await this.generateAuthUrl()
+        }
+      }
+      // Checking if user data can be queried to confirm token is valid
+      const user = await this.getUser()
+      // NOTE: oidc-client-ts uses "profile" as key
+      if (user) {
+        this.createTimeoutForTokenExpiry()
+        return { ...JSON.parse(oidcCookie), user }
+      }
+    }
+
+    // No access token (cookie), no user => redirect to login page
 
     window.location.href = await this.generateAuthUrl()
   }
@@ -169,6 +180,11 @@ export default class {
     const expiryTime = time + 1000 * expires_in
     expiryDate.setTime(expiryTime)
     return expiryDate
+  }
+
+  isExpired(expires_at: string) {
+    const expiryDate = new Date(expires_at)
+    return new Date().getTime() - expiryDate.getTime() > 0
   }
 
   saveAuthData(data: {
