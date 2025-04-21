@@ -84,16 +84,13 @@ export default class {
         }
       } catch (error) {
         console.error(error)
-        window.location.href = await this.generateAuthUrl()
+        this.sendUserToAuthUrl(false)
         return
       }
     }
 
     // TODO: Is this really a good idea to have this here?
     // Keep track of where the user was going
-    document.cookie = `href=${
-      window.location.href
-    }; ${this.makeCookieOptions()}`
 
     // Check if OIDC cookie already available
     // WARNING: available does not mean valid: access token might be expired
@@ -106,7 +103,7 @@ export default class {
           await this.refreshAccessToken()
         } catch (error) {
           console.error(error)
-          window.location.href = await this.generateAuthUrl()
+          this.sendUserToAuthUrl(true)
         }
       }
       // Checking if user data can be queried to confirm token is valid
@@ -119,7 +116,15 @@ export default class {
     }
 
     // No access token (cookie), no user => redirect to login page
+    this.sendUserToAuthUrl(true)
+  }
 
+  async sendUserToAuthUrl(saveHref: Boolean) {
+    if (saveHref) {
+      document.cookie = `href=${
+        window.location.href
+      }; ${this.makeCookieOptions()}`
+    }
     window.location.href = await this.generateAuthUrl()
   }
 
