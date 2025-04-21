@@ -91,7 +91,7 @@ export default class {
 
     // TODO: Is this really a good idea to have this here?
     // Keep track of where the user was going
-    document.cookie = `href=${window.location.href}`
+    document.cookie = `href=${window.location.href}; ${this.makeCookieOptions}`
 
     // Check if OIDC cookie already available
     // WARNING: available does not mean valid: access token might be expired
@@ -153,7 +153,7 @@ export default class {
       })
     }
 
-    document.cookie = `verifier=${verifier}`
+    document.cookie = `verifier=${verifier}; ${this.makeCookieOptions()}`
 
     return authUrl.toString()
   }
@@ -174,7 +174,14 @@ export default class {
     }, timeLeft)
   }
 
+  makeCookieOptions() {
+    const expires = this.makeExpiryDate(3.156e7)
+    console.log(expires)
+    return `path=/; expires=${expires}`
+  }
+
   makeExpiryDate(expires_in: number) {
+    // unit of expires_in is seconds
     const expiryDate = new Date()
     const time = expiryDate.getTime()
     const expiryTime = time + 1000 * expires_in
@@ -197,7 +204,7 @@ export default class {
     document.cookie = `oidc=${JSON.stringify({
       ...data,
       expires_at: expiryDate.toUTCString(),
-    })}`
+    })}; ${this.makeCookieOptions()}`
   }
 
   async exchangeCodeForToken(code: string) {
