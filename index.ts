@@ -91,7 +91,9 @@ export default class {
 
     // TODO: Is this really a good idea to have this here?
     // Keep track of where the user was going
-    document.cookie = `href=${window.location.href}; ${this.makeCookieOptions}`
+    document.cookie = `href=${
+      window.location.href
+    }; ${this.makeCookieOptions()}`
 
     // Check if OIDC cookie already available
     // WARNING: available does not mean valid: access token might be expired
