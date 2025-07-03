@@ -1,4 +1,4 @@
-import { getCookie, removeCookie } from "./storage"
+import { getCookie, removeCookie, setCookie } from "./storage"
 import { createPkcePair } from "./pkce"
 
 interface BaseOptions {
@@ -11,7 +11,7 @@ interface Options extends BaseOptions {
   redirect_uri: string
 }
 
-interface UserOptions extends BaseOptions {
+interface UserProvidedOptions extends BaseOptions {
   redirect_uri?: string
 }
 
@@ -44,7 +44,7 @@ type RefreshHandler = (oidcData: OidcData) => void
 This is a class because
 - It allows to get user info
 - It will provide event listeners in the future
-- It allows to logout (WIP)
+- It allows to logout
 */
 
 export default class {
@@ -53,7 +53,7 @@ export default class {
   openidConfig?: OidcConfig
   refreshEventHandlers: Function[] = []
 
-  constructor(options: UserOptions) {
+  constructor(options: UserProvidedOptions) {
     const { redirect_uri = window.location.origin, ...rest } = options
 
     this.options = {
@@ -63,7 +63,7 @@ export default class {
   }
 
   async init(): Promise<OidcData | undefined> {
-    this.openidConfig = await this.getOidcConfig()
+    this.openidConfig = await this.fetchOidcConfig()
 
     const currentUrl = new URL(window.location.href)
     const code = currentUrl.searchParams.get("code")
@@ -88,9 +88,6 @@ export default class {
         return
       }
     }
-
-    // TODO: Is this really a good idea to have this here?
-    // Keep track of where the user was going
 
     // Check if OIDC cookie already available
     // WARNING: available does not mean valid: access token might be expired
@@ -121,14 +118,13 @@ export default class {
 
   async sendUserToAuthUrl(saveHref: Boolean) {
     if (saveHref) {
-      document.cookie = `href=${
-        window.location.href
-      }; ${this.makeCookieOptions()}`
+      const { href } = window.location
+      setCookie("href", href, this.makeCookieOptions())
     }
     window.location.href = await this.generateAuthUrl()
   }
 
-  async getOidcConfig() {
+  async fetchOidcConfig() {
     const { authority } = this.options
     const openIdConfigUrl = `${authority}/.well-known/openid-configuration`
     const response = await fetch(openIdConfigUrl)
@@ -144,23 +140,23 @@ export default class {
 
     const authUrl = new URL(authorization_endpoint)
 
-    authUrl.searchParams.append("response_type", "code")
-    authUrl.searchParams.append("client_id", client_id)
+    // TODO: have scope configurable
     authUrl.searchParams.append("scope", "openid profile offline_access")
+    authUrl.searchParams.append("response_type", "code")
     authUrl.searchParams.append("code_challenge_method", "S256")
     authUrl.searchParams.append("code_challenge", challenge)
+    authUrl.searchParams.append("client_id", client_id)
     authUrl.searchParams.append("redirect_uri", redirect_uri)
 
-    // Additional searchParams such as audience for Auth0
+    // Additional searchParams such as audience
     const { extraQueryParams } = this.options
-
     if (extraQueryParams !== undefined) {
       Object.keys(extraQueryParams).forEach((key) => {
         authUrl.searchParams.append(key, extraQueryParams[key])
       })
     }
 
-    document.cookie = `verifier=${verifier}; ${this.makeCookieOptions()}`
+    setCookie("verifier", verifier, this.makeCookieOptions())
 
     return authUrl.toString()
   }
@@ -183,7 +179,6 @@ export default class {
 
   makeCookieOptions() {
     const expires = this.makeExpiryDate(3.156e7)
-    console.log(expires)
     return `path=/; expires=${expires}`
   }
 
@@ -201,17 +196,19 @@ export default class {
     return new Date().getTime() - expiryDate.getTime() > 0
   }
 
-  saveAuthData(data: {
+  saveAuthDataInCookies(data: {
     expires_in: number // unit is seconds
   }) {
     const { expires_in } = data
     const expiryDate = this.makeExpiryDate(expires_in)
 
-    // Note: not setting any expiry because refresh token needed to refresh after expiry
-    document.cookie = `oidc=${JSON.stringify({
+    const cookieConent = JSON.stringify({
       ...data,
       expires_at: expiryDate.toUTCString(),
-    })}; ${this.makeCookieOptions()}`
+    })
+
+    // Note: not setting any expiry because refresh token needed to refresh after expiry
+    setCookie("oidc", cookieConent, this.makeCookieOptions())
   }
 
   async exchangeCodeForToken(code: string) {
@@ -244,7 +241,7 @@ export default class {
     if (!response.ok) throw `Error getting token ${await response.text()}`
 
     const data = await response.json()
-    this.saveAuthData(data)
+    this.saveAuthDataInCookies(data)
   }
 
   async getUser() {
@@ -304,7 +301,7 @@ export default class {
 
     const data = await response.json()
 
-    this.saveAuthData(data)
+    this.saveAuthDataInCookies(data)
     this.createTimeoutForTokenExpiry()
     this.runRefreshEventHandlers()
   }
@@ -338,4 +335,4 @@ export default class {
   }
 }
 
-export type { User, UserOptions as OidcOptions, OidcConfig }
+export type { User, UserProvidedOptions as OidcOptions, OidcConfig }
