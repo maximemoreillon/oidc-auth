@@ -6,8 +6,6 @@ publish:
   stage: publish
   only:
     - tags
-  tags:
-    - moreillon
   script:
     # Install dependencies and build app
     - npm install
