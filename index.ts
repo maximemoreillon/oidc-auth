@@ -34,8 +34,11 @@ interface OidcData {
   access_token: string
   refresh_token: string
   expires_at: string
+  scope: string
+}
+
+interface InitOutput extends OidcData {
   user: User
-  [key: string]: unknown
 }
 
 type RefreshHandler = (oidcData: OidcData) => void
@@ -62,7 +65,7 @@ export default class {
     }
   }
 
-  async init(): Promise<OidcData | undefined> {
+  async init(): Promise<InitOutput | undefined> {
     this.openidConfig = await this.fetchOidcConfig()
 
     const currentUrl = new URL(window.location.href)
@@ -94,8 +97,9 @@ export default class {
     const oidcCookie = getCookie(this.cookieName)
 
     if (oidcCookie) {
+      const parsedOidcCookie = JSON.parse(oidcCookie)
       // TODO: have this here or in getUser()?
-      if (this.isExpired(JSON.parse(oidcCookie).expires_at)) {
+      if (this.isExpired(parsedOidcCookie.expires_at)) {
         try {
           await this.refreshAccessToken()
         } catch (error) {
@@ -108,7 +112,7 @@ export default class {
       // NOTE: oidc-client-ts uses "profile" as key
       if (user) {
         this.createTimeoutForTokenExpiry()
-        return { ...JSON.parse(oidcCookie), user }
+        return { ...parsedOidcCookie, user }
       }
     }
 
@@ -172,9 +176,7 @@ export default class {
     const expiryDate = new Date(expires_at)
     const timeLeft = expiryDate.getTime() - Date.now()
 
-    setTimeout(() => {
-      this.refreshAccessToken()
-    }, timeLeft)
+    setTimeout(this.refreshAccessToken, timeLeft)
   }
 
   makeCookieOptions() {
@@ -303,17 +305,15 @@ export default class {
 
     this.saveAuthDataInCookies(data)
     this.createTimeoutForTokenExpiry()
-    this.runRefreshEventHandlers()
+    this.runRefreshEventHandlers(data)
   }
 
   onTokenRefreshed(handler: RefreshHandler) {
     this.refreshEventHandlers.push(handler)
   }
 
-  runRefreshEventHandlers() {
-    const oidcCookie = getCookie(this.cookieName)
-    if (!oidcCookie) return null
-    const oidcData = JSON.parse(oidcCookie)
+  runRefreshEventHandlers(oidcData: OidcData) {
+    // NOTE: does not contain user
     this.refreshEventHandlers.forEach((handler) => handler(oidcData))
   }
 

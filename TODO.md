@@ -1,0 +1,2 @@
+- [ ] Consider renaming OidcData type to TokenSet
+- [ ] Better separation between OidcData and User data
