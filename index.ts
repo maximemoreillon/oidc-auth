@@ -318,13 +318,13 @@ export default class {
     if (!oidcCookie) throw new Error("No OIDC cookie")
 
     const tokens = JSON.parse(oidcCookie)
-    // NOTE: does not contain user
 
+    // NOTE: does not contain user
     this.refreshEventHandlers.forEach((handler) => handler(tokens))
   }
 
   login() {
-    // TODO: Allow setting target URL fior after login
+    // TODO: Allow setting target URL for after login
     this.sendUserToAuthUrl(true)
   }
 

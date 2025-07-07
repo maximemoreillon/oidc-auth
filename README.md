@@ -2,9 +2,7 @@
 
 A simple class that enforces authentication using OpenID Connect / Oauth2.0
 
-## Usage
-
-### Example with Vue.js
+## Usage example
 
 ```ts
 import OidcClient from "@moreillon/oidc-auth"
