@@ -339,5 +339,3 @@ export default class {
     window.location.href = logoutUrl.toString()
   }
 }
-
-export type { User, UserProvidedOptions as OidcOptions, OidcConfig }
