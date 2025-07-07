@@ -30,18 +30,19 @@ interface User {
   [key: string]: unknown
 }
 
-interface OidcData {
+interface Tokens {
   access_token: string
   refresh_token: string
   expires_at: string
   scope: string
 }
 
-interface InitOutput extends OidcData {
+interface InitOutput {
+  tokens: Tokens
   user: User
 }
 
-type RefreshHandler = (oidcData: OidcData) => void
+type RefreshHandler = (oidcData: Tokens) => void
 
 /* 
 This is a class because
@@ -65,14 +66,16 @@ export default class {
     }
   }
 
-  async init(): Promise<InitOutput | undefined> {
+  async init(enforce: boolean = true): Promise<InitOutput | undefined> {
     this.openidConfig = await this.fetchOidcConfig()
+    if (!this.openidConfig) throw new Error("Failed to fetch OIDC config")
 
-    const currentUrl = new URL(window.location.href)
-    const code = currentUrl.searchParams.get("code")
+    try {
+      const currentUrl = new URL(window.location.href)
+      const code = currentUrl.searchParams.get("code")
 
-    if (code) {
-      try {
+      // TODO: also check if matching redirect URI
+      if (code) {
         await this.exchangeCodeForToken(code)
 
         // Redirect user to page originally requested
@@ -85,39 +88,34 @@ export default class {
           window.location.href = this.options.redirect_uri
           return
         }
-      } catch (error) {
-        console.error(error)
-        this.sendUserToAuthUrl(false)
-        return
       }
-    }
 
-    // Check if OIDC cookie already available
-    // WARNING: available does not mean valid: access token might be expired
-    const oidcCookie = getCookie(this.cookieName)
+      // Check if OIDC cookie already available
+      // WARNING: available does not mean valid: access token might be expired
+      const oidcCookie = getCookie(this.cookieName)
 
-    if (oidcCookie) {
-      const parsedOidcCookie = JSON.parse(oidcCookie)
-      // TODO: have this here or in getUser()?
-      if (this.isExpired(parsedOidcCookie.expires_at)) {
-        try {
-          await this.refreshAccessToken()
-        } catch (error) {
-          console.error(error)
-          this.sendUserToAuthUrl(true)
+      if (oidcCookie) {
+        const parsedOidcCookie = JSON.parse(oidcCookie)
+        // TODO: have this here or in getUser()?
+        if (this.isExpired(parsedOidcCookie.expires_at))
+          await this.refreshAccessToken(this.openidConfig)
+
+        // Checking if user data can be queried to confirm token is valid
+        const user = await this.getUser()
+        // NOTE: oidc-client-ts uses "profile" as key
+        if (user) {
+          this.createTimeoutForTokenExpiry(this.openidConfig)
+          return { tokens: parsedOidcCookie, user }
         }
       }
-      // Checking if user data can be queried to confirm token is valid
-      const user = await this.getUser()
-      // NOTE: oidc-client-ts uses "profile" as key
-      if (user) {
-        this.createTimeoutForTokenExpiry()
-        return { ...parsedOidcCookie, user }
-      }
+    } catch (error) {
+      console.error(error)
+      // TODO: delete cookies
     }
 
     // No access token (cookie), no user => redirect to login page
-    this.sendUserToAuthUrl(true)
+    // TODO: only redirect if option is set to do so
+    if (enforce) this.sendUserToAuthUrl(true)
   }
 
   async sendUserToAuthUrl(saveHref: Boolean) {
@@ -132,6 +130,7 @@ export default class {
     const { authority } = this.options
     const openIdConfigUrl = `${authority}/.well-known/openid-configuration`
     const response = await fetch(openIdConfigUrl)
+    // TODO: handle errors
     return await response.json()
   }
 
@@ -165,7 +164,7 @@ export default class {
     return authUrl.toString()
   }
 
-  createTimeoutForTokenExpiry() {
+  createTimeoutForTokenExpiry(oidConfig: OidcConfig) {
     const oidcCookie = getCookie(this.cookieName)
     if (!oidcCookie) return
 
@@ -176,7 +175,8 @@ export default class {
     const expiryDate = new Date(expires_at)
     const timeLeft = expiryDate.getTime() - Date.now()
 
-    setTimeout(this.refreshAccessToken, timeLeft)
+    // TODO: change back
+    setTimeout(() => this.refreshAccessToken(oidConfig), timeLeft)
   }
 
   makeCookieOptions() {
@@ -204,13 +204,13 @@ export default class {
     const { expires_in } = data
     const expiryDate = this.makeExpiryDate(expires_in)
 
-    const cookieConent = JSON.stringify({
+    const cookieContent = JSON.stringify({
       ...data,
       expires_at: expiryDate.toUTCString(),
     })
 
     // Note: not setting any expiry because refresh token needed to refresh after expiry
-    setCookie("oidc", cookieConent, this.makeCookieOptions())
+    setCookie(this.cookieName, cookieContent, this.makeCookieOptions())
   }
 
   async exchangeCodeForToken(code: string) {
@@ -272,16 +272,16 @@ export default class {
     return await response.json()
   }
 
-  async refreshAccessToken() {
-    if (!this.openidConfig) throw new Error("OpenID config not available")
-
+  // TODO: pass config as argument
+  async refreshAccessToken(oidcConfig: OidcConfig) {
     const oidcCookie = getCookie(this.cookieName)
     if (!oidcCookie) throw new Error("No OIDC cookie")
 
-    const { refresh_token } = JSON.parse(oidcCookie)
+    const parsedOidcCookie = JSON.parse(oidcCookie)
+    const { refresh_token } = parsedOidcCookie
     if (!refresh_token) throw new Error("No refresh token")
 
-    const { token_endpoint } = this.openidConfig
+    const { token_endpoint } = oidcConfig
     const { client_id } = this.options
 
     const body = new URLSearchParams({
@@ -304,20 +304,25 @@ export default class {
     const data = await response.json()
 
     this.saveAuthDataInCookies(data)
-    this.createTimeoutForTokenExpiry()
-    this.runRefreshEventHandlers(data)
+    this.createTimeoutForTokenExpiry(oidcConfig)
+    this.runRefreshEventHandlers(parsedOidcCookie)
   }
 
   onTokenRefreshed(handler: RefreshHandler) {
     this.refreshEventHandlers.push(handler)
   }
 
-  runRefreshEventHandlers(oidcData: OidcData) {
+  runRefreshEventHandlers(newTokens: Tokens) {
     // NOTE: does not contain user
-    this.refreshEventHandlers.forEach((handler) => handler(oidcData))
+    this.refreshEventHandlers.forEach((handler) => handler(newTokens))
   }
 
-  async logout() {
+  login() {
+    // TODO: Allow setting target URL fior after login
+    this.sendUserToAuthUrl(true)
+  }
+
+  logout() {
     if (!this.openidConfig) throw new Error("OpenID config not available")
     const { end_session_endpoint } = this.openidConfig
     const oidcCookie = getCookie(this.cookieName)
