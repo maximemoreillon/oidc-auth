@@ -23,11 +23,11 @@ const oidcClient = new OidcClient({
 async function main() {
   const result = await oidcClient.init()
   if (!result) return
-  const { acess_token, user } = result
+  const { tokens, user } = result
 
-  oidcClient.onTokenRefreshed((oidcData) => {
+  oidcClient.onTokenRefreshed((tokens) => {
     console.log("Token refreshed")
-    console.log(oidcData)
+    console.log(tokens)
   })
 }
 
