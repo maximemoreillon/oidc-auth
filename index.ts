@@ -240,7 +240,8 @@ export default class {
     }
 
     const response = await fetch(token_endpoint, options)
-    if (!response.ok) throw `Error getting token ${await response.text()}`
+    if (!response.ok)
+      throw new Error(`Error getting token ${await response.text()}`)
 
     const data = await response.json()
     this.saveAuthDataInCookies(data)
@@ -305,16 +306,21 @@ export default class {
 
     this.saveAuthDataInCookies(data)
     this.createTimeoutForTokenExpiry(oidcConfig)
-    this.runRefreshEventHandlers(parsedOidcCookie)
+    this.runRefreshEventHandlers()
   }
 
   onTokenRefreshed(handler: RefreshHandler) {
     this.refreshEventHandlers.push(handler)
   }
 
-  runRefreshEventHandlers(newTokens: Tokens) {
+  runRefreshEventHandlers() {
+    const oidcCookie = getCookie(this.cookieName)
+    if (!oidcCookie) throw new Error("No OIDC cookie")
+
+    const tokens = JSON.parse(oidcCookie)
     // NOTE: does not contain user
-    this.refreshEventHandlers.forEach((handler) => handler(newTokens))
+
+    this.refreshEventHandlers.forEach((handler) => handler(tokens))
   }
 
   login() {
