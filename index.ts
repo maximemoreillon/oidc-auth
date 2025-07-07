@@ -1,28 +1,28 @@
 import { getCookie, removeCookie, setCookie } from "./storage"
 import { createPkcePair } from "./pkce"
 
-interface BaseOptions {
+export interface BaseOptions {
   authority: string
   client_id: string
   extraQueryParams?: { [key: string]: string }
 }
 
-interface Options extends BaseOptions {
+export interface Options extends BaseOptions {
   redirect_uri: string
 }
 
-interface UserProvidedOptions extends BaseOptions {
+export interface UserProvidedOptions extends BaseOptions {
   redirect_uri?: string
 }
 
-interface OidcConfig {
+export interface OidcConfig {
   authorization_endpoint: string
   token_endpoint: string
   userinfo_endpoint: string
   end_session_endpoint: string
 }
 
-interface User {
+export interface User {
   name: string
   email: string
   family_name: string
@@ -30,14 +30,14 @@ interface User {
   [key: string]: unknown
 }
 
-interface Tokens {
+export interface Tokens {
   access_token: string
   refresh_token: string
   expires_at: string
   scope: string
 }
 
-interface InitOutput {
+export interface InitOutput {
   tokens: Tokens
   user: User
 }
