@@ -109,8 +109,8 @@ export default class {
         }
       }
     } catch (error) {
+      removeCookie(this.cookieName)
       console.error(error)
-      // TODO: delete cookies
     }
 
     // No access token (cookie), no user => redirect to login page
@@ -277,6 +277,8 @@ export default class {
   async refreshAccessToken(oidcConfig: OidcConfig) {
     const oidcCookie = getCookie(this.cookieName)
     if (!oidcCookie) throw new Error("No OIDC cookie")
+
+    // PROBLEM: oidcCookie can sometimes be URLencoded
 
     const parsedOidcCookie = JSON.parse(oidcCookie)
     const { refresh_token } = parsedOidcCookie
