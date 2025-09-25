@@ -85,7 +85,7 @@ export default class {
           window.location.href = href
           return
         } else {
-          window.location.href = this.options.redirect_uri
+          window.location.href = this.options.redirect_uri // Not ideal but this is the only location we know exists on the app
           return
         }
       }
@@ -95,17 +95,20 @@ export default class {
       const oidcCookie = getCookie(this.cookieName)
 
       if (oidcCookie) {
-        const parsedOidcCookie = JSON.parse(oidcCookie)
+        let cookieContent = JSON.parse(oidcCookie)
         // TODO: have this here or in getUser()?
-        if (this.isExpired(parsedOidcCookie.expires_at))
-          await this.refreshAccessToken(this.openidConfig)
+        if (this.isExpired(cookieContent.expires_at)) {
+          console.warn("Access token was initially expired, refreshing...")
+          cookieContent = await this.refreshAccessToken(this.openidConfig)
+          console.info("Initially expired access token has been refreshed")
+        }
 
         // Checking if user data can be queried to confirm token is valid
         const user = await this.getUser()
         // NOTE: oidc-client-ts uses "profile" as key
         if (user) {
           this.createTimeoutForTokenExpiry(this.openidConfig)
-          return { tokens: parsedOidcCookie, user }
+          return { tokens: cookieContent, user }
         }
       }
     } catch (error) {
@@ -204,13 +207,19 @@ export default class {
     const { expires_in } = data
     const expiryDate = this.makeExpiryDate(expires_in)
 
-    const cookieContent = JSON.stringify({
+    const cookieContent = {
       ...data,
       expires_at: expiryDate.toUTCString(),
-    })
+    }
 
     // Note: not setting any expiry because refresh token needed to refresh after expiry
-    setCookie(this.cookieName, cookieContent, this.makeCookieOptions())
+    setCookie(
+      this.cookieName,
+      JSON.stringify(cookieContent),
+      this.makeCookieOptions()
+    )
+
+    return cookieContent
   }
 
   async exchangeCodeForToken(code: string) {
@@ -306,9 +315,11 @@ export default class {
 
     const data = await response.json()
 
-    this.saveAuthDataInCookies(data)
+    const cookieContent = this.saveAuthDataInCookies(data)
     this.createTimeoutForTokenExpiry(oidcConfig)
     this.runRefreshEventHandlers()
+
+    return cookieContent
   }
 
   onTokenRefreshed(handler: RefreshHandler) {
