@@ -2,13 +2,14 @@ stages:
   - publish
 
 publish:
-  image: node:20
+  image: node:22
   stage: publish
   only:
     - tags
   script:
-    # Install dependencies and build app
-    - npm install
+    # Install dependencies, test and build
+    - npm ci
+    - npm test
     - npm run build
     # Auth and publish to NPM
     - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc

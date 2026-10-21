@@ -11,10 +11,12 @@ export function getCookie(key: string) {
     .split("; ")
     .find((row) => row.startsWith(`${key}=`))
 
-  if (foundRow) return foundRow.split("=")[1]
+  // Values can contain "=" themselves, so only strip the "key=" prefix
+  if (foundRow) return foundRow.slice(key.length + 1)
   return null
 }
 
 export function removeCookie(key: string) {
-  document.cookie = `${key}=; expires=Thu, 01 Jan 1970 00:00:00 UTC;`
+  // Path must match the one used when setting the cookie
+  document.cookie = `${key}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC;`
 }

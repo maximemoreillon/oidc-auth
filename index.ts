@@ -1,5 +1,5 @@
-import { getCookie, removeCookie, setCookie } from "./storage"
-import { createPkcePair } from "./pkce"
+import { getCookie, removeCookie } from "./storage.js"
+import { createPkcePair, generateState } from "./pkce.js"
 
 export interface BaseOptions {
   authority: string
@@ -33,8 +33,10 @@ export interface User {
 export interface Tokens {
   access_token: string
   refresh_token: string
+  id_token?: string
   expires_at: string
   scope: string
+  [key: string]: unknown
 }
 
 export interface InitOutput {
@@ -42,20 +44,46 @@ export interface InitOutput {
   user: User
 }
 
-type RefreshHandler = (oidcData: Tokens) => void
+// Login started by this client, waiting for the provider to redirect back
+interface PendingLogin {
+  verifier: string
+  href: string
+  created_at: number
+}
 
-/* 
+type TokenResponse = { expires_in: number; [key: string]: unknown }
+type RefreshHandler = (tokens: Tokens) => void
+type RefreshErrorHandler = (error: unknown) => void
+type LogoutHandler = () => void
+
+// The provider rejected the tokens: the session is over, unlike with network or server errors
+export class TokenRejectedError extends Error {
+  name = "TokenRejectedError"
+}
+
+// Refresh this long before the access token expires (seconds)
+const REFRESH_MARGIN = 60
+// Delay between retries of a failed refresh while the access token is still valid (seconds)
+const REFRESH_RETRY_DELAY = 10
+// Pending logins older than this are discarded (seconds)
+const PENDING_LOGIN_TTL = 3600
+
+/*
 This is a class because
 - It allows to get user info
-- It will provide event listeners in the future
+- It provides event listeners
 - It allows to logout
 */
 
 export default class {
-  cookieName = "oidc"
+  // Key of the tokens in localStorage, also the name of the cookie used by v3 and earlier
+  storageKey = "oidc"
   options: Options
   openidConfig?: OidcConfig
-  refreshEventHandlers: Function[] = []
+  refreshEventHandlers: RefreshHandler[] = []
+  refreshErrorHandlers: RefreshErrorHandler[] = []
+  logoutHandlers: LogoutHandler[] = []
+  refreshTimeout?: ReturnType<typeof setTimeout>
 
   constructor(options: UserProvidedOptions) {
     const { redirect_uri = window.location.origin, ...rest } = options
@@ -64,83 +92,71 @@ export default class {
       redirect_uri,
       ...rest,
     }
+
+    window.addEventListener("storage", this.handleStorageEvent)
   }
 
+  // Throws on network or server errors, in which case tokens are kept so that a reload can recover
   async init(enforce: boolean = true): Promise<InitOutput | undefined> {
     this.openidConfig = await this.fetchOidcConfig()
-    if (!this.openidConfig) throw new Error("Failed to fetch OIDC config")
 
-    try {
-      const currentUrl = new URL(window.location.href)
-      const code = currentUrl.searchParams.get("code")
+    const currentUrl = new URL(window.location.href)
+    if (this.isLoginCallback(currentUrl)) {
+      await this.handleLoginCallback(currentUrl)
+      return
+    }
 
-      // TODO: also check if matching redirect URI
-      if (code) {
-        await this.exchangeCodeForToken(code)
+    // WARNING: available does not mean valid: access token might be expired
+    let tokens = this.getTokens()
 
-        // Redirect user to page originally requested
-        const href = getCookie("href")
-        if (href) {
-          removeCookie("href")
-          window.location.href = href
-          return
-        } else {
-          window.location.href = this.options.redirect_uri // Not ideal but this is the only location we know exists on the app
-          return
-        }
-      }
-
-      // Check if OIDC cookie already available
-      // WARNING: available does not mean valid: access token might be expired
-      const oidcCookie = getCookie(this.cookieName)
-
-      if (oidcCookie) {
-        let cookieContent = JSON.parse(oidcCookie)
-        // TODO: have this here or in getUser()?
-        if (this.isExpired(cookieContent.expires_at)) {
+    if (tokens) {
+      try {
+        if (this.isExpired(tokens.expires_at)) {
           console.warn("Access token was initially expired, refreshing...")
-          cookieContent = await this.refreshAccessToken(this.openidConfig)
+          tokens = await this.refreshAccessToken()
           console.info("Initially expired access token has been refreshed")
         }
 
         // Checking if user data can be queried to confirm token is valid
         const user = await this.getUser()
-        // NOTE: oidc-client-ts uses "profile" as key
-        if (user) {
-          this.createTimeoutForTokenExpiry(this.openidConfig)
-          return { tokens: cookieContent, user }
-        }
+        this.scheduleRefresh()
+        return { tokens, user }
+      } catch (error) {
+        if (!(error instanceof TokenRejectedError)) throw error
+        console.warn("Tokens rejected by the provider", error)
+        this.removeTokens()
       }
-    } catch (error) {
-      removeCookie(this.cookieName)
-      console.error(error)
     }
 
-    // No access token (cookie), no user => redirect to login page
-    // TODO: only redirect if option is set to do so
+    // No valid tokens => redirect to login page
     if (enforce) this.sendUserToAuthUrl(true)
   }
 
-  async sendUserToAuthUrl(saveHref: Boolean) {
-    if (saveHref) {
-      const { href } = window.location
-      setCookie("href", href, this.makeCookieOptions())
-    }
-    window.location.href = await this.generateAuthUrl()
+  redirect(url: string) {
+    window.location.href = url
   }
 
-  async fetchOidcConfig() {
+  async sendUserToAuthUrl(saveHref: boolean) {
+    const returnTo = saveHref ? window.location.href : undefined
+    this.redirect(await this.generateAuthUrl(returnTo))
+  }
+
+  async fetchOidcConfig(): Promise<OidcConfig> {
     const { authority } = this.options
     const openIdConfigUrl = `${authority}/.well-known/openid-configuration`
     const response = await fetch(openIdConfigUrl)
-    // TODO: handle errors
+    if (!response.ok)
+      throw new Error(
+        `Error fetching OIDC config from ${openIdConfigUrl}: ${response.status}`
+      )
     return await response.json()
   }
 
-  async generateAuthUrl() {
+  async generateAuthUrl(returnTo = this.options.redirect_uri) {
     if (!this.openidConfig) throw new Error("OpenID config not available")
 
     const { verifier, challenge } = createPkcePair()
+    const state = generateState()
     const { client_id, redirect_uri } = this.options
     const { authorization_endpoint } = this.openidConfig
 
@@ -153,6 +169,7 @@ export default class {
     authUrl.searchParams.append("code_challenge", challenge)
     authUrl.searchParams.append("client_id", client_id)
     authUrl.searchParams.append("redirect_uri", redirect_uri)
+    authUrl.searchParams.append("state", state)
 
     // Additional searchParams such as audience
     const { extraQueryParams } = this.options
@@ -162,29 +179,127 @@ export default class {
       })
     }
 
-    setCookie("verifier", verifier, this.makeCookieOptions())
+    this.savePendingLogin(state, {
+      verifier,
+      href: returnTo,
+      created_at: Date.now(),
+    })
 
     return authUrl.toString()
   }
 
-  createTimeoutForTokenExpiry(oidConfig: OidcConfig) {
-    const oidcCookie = getCookie(this.cookieName)
-    if (!oidcCookie) return
-
-    const { expires_at } = JSON.parse(oidcCookie)
-
-    if (!expires_at) throw new Error("Missing expires_at field in OIDC cookie")
-
-    const expiryDate = new Date(expires_at)
-    const timeLeft = expiryDate.getTime() - Date.now()
-
-    // TODO: change back
-    setTimeout(() => this.refreshAccessToken(oidConfig), timeLeft)
+  // Keyed by state so that concurrent logins (e.g. in multiple tabs) do not overwrite each other
+  get pendingLoginsKey() {
+    return `${this.storageKey}-login`
   }
 
-  makeCookieOptions() {
-    const expires = this.makeExpiryDate(3.156e7)
-    return `path=/; expires=${expires}`
+  getPendingLogins(): Record<string, PendingLogin> {
+    try {
+      return JSON.parse(localStorage.getItem(this.pendingLoginsKey) ?? "{}")
+    } catch {
+      return {}
+    }
+  }
+
+  savePendingLogin(state: string, login: PendingLogin) {
+    const logins = this.getPendingLogins()
+    const now = Date.now()
+    for (const [key, { created_at }] of Object.entries(logins)) {
+      if (now - created_at > PENDING_LOGIN_TTL * 1000) delete logins[key]
+    }
+    logins[state] = login
+    localStorage.setItem(this.pendingLoginsKey, JSON.stringify(logins))
+  }
+
+  takePendingLogin(state: string) {
+    const logins = this.getPendingLogins()
+    const login = logins[state]
+    delete logins[state]
+    localStorage.setItem(this.pendingLoginsKey, JSON.stringify(logins))
+    return login
+  }
+
+  // Only the redirect of a login started by this client counts, not any URL with a "code" parameter
+  isLoginCallback(url: URL) {
+    const redirectUrl = new URL(this.options.redirect_uri)
+    const state = url.searchParams.get("state")
+
+    return (
+      url.origin === redirectUrl.origin &&
+      url.pathname === redirectUrl.pathname &&
+      (url.searchParams.has("code") || url.searchParams.has("error")) &&
+      state !== null &&
+      state in this.getPendingLogins()
+    )
+  }
+
+  async handleLoginCallback(url: URL) {
+    const { verifier, href } = this.takePendingLogin(
+      url.searchParams.get("state") as string
+    )
+
+    const error = url.searchParams.get("error")
+    if (error) {
+      const description = url.searchParams.get("error_description")
+      throw new Error(`Login failed: ${description ?? error}`)
+    }
+
+    await this.exchangeCodeForToken(url.searchParams.get("code") as string, verifier)
+
+    // Back to the page originally requested
+    this.redirect(href)
+  }
+
+  scheduleRefresh(delay?: number) {
+    clearTimeout(this.refreshTimeout)
+
+    const tokens = this.getTokens()
+    if (!tokens) return
+
+    if (delay === undefined) {
+      const timeLeft = new Date(tokens.expires_at).getTime() - Date.now()
+      // Halfway through for tokens too short-lived for the margin, to avoid a refresh loop
+      delay = Math.max(timeLeft - REFRESH_MARGIN * 1000, timeLeft / 2, 0)
+    }
+
+    this.refreshTimeout = setTimeout(() => {
+      this.refreshAccessToken().catch((error) => this.handleRefreshError(error))
+    }, delay)
+  }
+
+  handleRefreshError(error: unknown) {
+    if (error instanceof TokenRejectedError) {
+      console.error("Tokens rejected by the provider", error)
+      this.removeTokens()
+      this.refreshErrorHandlers.forEach((handler) => handler(error))
+      this.logoutHandlers.forEach((handler) => handler())
+      return
+    }
+
+    // Transient failures (e.g. network) are retried as long as the access token remains usable
+    const tokens = this.getTokens()
+    if (tokens && !this.isExpired(tokens.expires_at)) {
+      console.warn("Token refresh failed, retrying...", error)
+      this.scheduleRefresh(REFRESH_RETRY_DELAY * 1000)
+      return
+    }
+
+    console.error("Token refresh failed", error)
+    this.refreshErrorHandlers.forEach((handler) => handler(error))
+  }
+
+  // Keeps tabs in sync: a refresh or logout in one tab updates localStorage, which notifies the others
+  handleStorageEvent = (event: StorageEvent) => {
+    if (event.key !== this.storageKey || !this.openidConfig) return
+
+    if (!event.newValue) {
+      clearTimeout(this.refreshTimeout)
+      this.logoutHandlers.forEach((handler) => handler())
+      return
+    }
+
+    this.scheduleRefresh()
+    this.runRefreshEventHandlers()
   }
 
   makeExpiryDate(expires_in: number) {
@@ -201,36 +316,52 @@ export default class {
     return new Date().getTime() - expiryDate.getTime() > 0
   }
 
-  saveAuthDataInCookies(data: {
-    expires_in: number // unit is seconds
-  }) {
-    const { expires_in } = data
-    const expiryDate = this.makeExpiryDate(expires_in)
-
-    const cookieContent = {
-      ...data,
-      expires_at: expiryDate.toUTCString(),
-    }
-
-    // Note: not setting any expiry because refresh token needed to refresh after expiry
-    setCookie(
-      this.cookieName,
-      JSON.stringify(cookieContent),
-      this.makeCookieOptions()
-    )
-
-    return cookieContent
+  getTokens(): Tokens | null {
+    const stored =
+      localStorage.getItem(this.storageKey) ?? this.migrateLegacyCookie()
+    if (!stored) return null
+    return JSON.parse(stored)
   }
 
-  async exchangeCodeForToken(code: string) {
+  // Up to v3, tokens were stored in a cookie: move them to localStorage so users stay logged in
+  migrateLegacyCookie() {
+    const cookie = getCookie(this.storageKey)
+    if (!cookie) return null
+
+    removeCookie(this.storageKey)
+
+    // Cookie values were written unencoded but can come back URL encoded
+    const value = cookie.startsWith("{") ? cookie : decodeURIComponent(cookie)
+    localStorage.setItem(this.storageKey, value)
+    return value
+  }
+
+  // Refresh responses can omit tokens that remain valid (e.g. refresh_token, id_token), hence the merge with previous tokens
+  saveTokens(data: TokenResponse, previousTokens?: Tokens | null): Tokens {
+    const expiryDate = this.makeExpiryDate(data.expires_in)
+
+    const tokens = {
+      ...previousTokens,
+      ...data,
+      expires_at: expiryDate.toUTCString(),
+    } as Tokens
+
+    localStorage.setItem(this.storageKey, JSON.stringify(tokens))
+
+    return tokens
+  }
+
+  removeTokens() {
+    clearTimeout(this.refreshTimeout)
+    localStorage.removeItem(this.storageKey)
+    removeCookie(this.storageKey)
+  }
+
+  async exchangeCodeForToken(code: string, code_verifier: string) {
     if (!this.openidConfig) throw new Error("OpenID config not available")
 
     const { token_endpoint } = this.openidConfig
     const { redirect_uri, client_id } = this.options
-
-    const code_verifier = getCookie("verifier")
-    if (!code_verifier) throw new Error("Missing verifier")
-    removeCookie("verifier")
 
     const body = new URLSearchParams({
       code,
@@ -253,19 +384,15 @@ export default class {
       throw new Error(`Error getting token ${await response.text()}`)
 
     const data = await response.json()
-    this.saveAuthDataInCookies(data)
+    this.saveTokens(data)
   }
 
-  async getUser() {
-    // Currently returns null if user cannot be queried
+  async getUser(): Promise<User> {
     if (!this.openidConfig) throw new Error("OpenID config not available")
     const { userinfo_endpoint } = this.openidConfig
 
-    const oidcCookie = getCookie(this.cookieName)
-    if (!oidcCookie) return null
-
-    const { access_token } = JSON.parse(oidcCookie)
-    if (!access_token) return null
+    const access_token = this.getTokens()?.access_token
+    if (!access_token) throw new TokenRejectedError("No access token")
 
     const options: RequestInit = {
       headers: {
@@ -275,62 +402,93 @@ export default class {
 
     const response = await fetch(userinfo_endpoint, options)
     if (!response.ok) {
-      // TODO: throw error or return null?
-      console.error(`Error getting user info: ${await response.text()}`)
-      return null
+      const message = `Error getting user info: ${await response.text()}`
+      if (response.status === 401) throw new TokenRejectedError(message)
+      throw new Error(message)
     }
     return await response.json()
   }
 
-  // TODO: pass config as argument
-  async refreshAccessToken(oidcConfig: OidcConfig) {
-    const oidcCookie = getCookie(this.cookieName)
-    if (!oidcCookie) throw new Error("No OIDC cookie")
+  // Ensures only one tab refreshes at a time, as refresh tokens can be single use
+  async withRefreshLock<T>(callback: () => Promise<T>): Promise<T> {
+    // Web Locks API is not available in insecure contexts
+    if (!navigator.locks) return callback()
+    return navigator.locks.request(`${this.storageKey}-refresh`, callback)
+  }
 
-    // PROBLEM: oidcCookie can sometimes be URLencoded
+  async refreshAccessToken(oidcConfig = this.openidConfig): Promise<Tokens> {
+    if (!oidcConfig) throw new Error("OpenID config not available")
 
-    const parsedOidcCookie = JSON.parse(oidcCookie)
-    const { refresh_token } = parsedOidcCookie
-    if (!refresh_token) throw new Error("No refresh token")
+    const accessTokenBeforeLock = this.getTokens()?.access_token
 
-    const { token_endpoint } = oidcConfig
-    const { client_id } = this.options
+    return this.withRefreshLock(async () => {
+      const tokens = this.getTokens()
+      if (!tokens) throw new TokenRejectedError("No tokens")
 
-    const body = new URLSearchParams({
-      client_id,
-      grant_type: "refresh_token",
-      refresh_token,
+      // Another tab might have refreshed the tokens while this one was waiting for the lock
+      if (
+        tokens.access_token !== accessTokenBeforeLock &&
+        !this.isExpired(tokens.expires_at)
+      )
+        return tokens
+
+      const { refresh_token } = tokens
+      if (!refresh_token) throw new TokenRejectedError("No refresh token")
+
+      const { token_endpoint } = oidcConfig
+      const { client_id } = this.options
+
+      const body = new URLSearchParams({
+        client_id,
+        grant_type: "refresh_token",
+        refresh_token,
+      })
+
+      const options: RequestInit = {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body,
+      }
+
+      const response = await fetch(token_endpoint, options)
+      if (!response.ok) {
+        const message = `Error refreshing token: ${await response.text()}`
+        // 400 (e.g. invalid_grant) and 401 (invalid_client) per RFC 6749 section 5.2
+        if (response.status === 400 || response.status === 401)
+          throw new TokenRejectedError(message)
+        throw new Error(message)
+      }
+
+      const data = await response.json()
+
+      const newTokens = this.saveTokens(data, tokens)
+      this.scheduleRefresh()
+      this.runRefreshEventHandlers()
+
+      return newTokens
     })
-
-    const options: RequestInit = {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-      },
-      body,
-    }
-
-    const response = await fetch(token_endpoint, options)
-    if (!response.ok) throw new Error("Error refreshing token")
-
-    const data = await response.json()
-
-    const cookieContent = this.saveAuthDataInCookies(data)
-    this.createTimeoutForTokenExpiry(oidcConfig)
-    this.runRefreshEventHandlers()
-
-    return cookieContent
   }
 
   onTokenRefreshed(handler: RefreshHandler) {
     this.refreshEventHandlers.push(handler)
   }
 
-  runRefreshEventHandlers() {
-    const oidcCookie = getCookie(this.cookieName)
-    if (!oidcCookie) throw new Error("No OIDC cookie")
+  // Called when tokens could not be refreshed before the access token expired, or were rejected
+  onRefreshError(handler: RefreshErrorHandler) {
+    this.refreshErrorHandlers.push(handler)
+  }
 
-    const tokens = JSON.parse(oidcCookie)
+  // Called when the session ends without logout() being called in this tab:
+  // logout in another tab, or tokens rejected by the provider
+  onLogout(handler: LogoutHandler) {
+    this.logoutHandlers.push(handler)
+  }
+
+  runRefreshEventHandlers() {
+    const tokens = this.getTokens()
+    if (!tokens) throw new Error("No tokens")
 
     // NOTE: does not contain user
     this.refreshEventHandlers.forEach((handler) => handler(tokens))
@@ -341,20 +499,19 @@ export default class {
     this.sendUserToAuthUrl(true)
   }
 
+  // Also works when already logged out locally (e.g. from another tab) to end the session at the provider
   logout() {
     if (!this.openidConfig) throw new Error("OpenID config not available")
     const { end_session_endpoint } = this.openidConfig
-    const oidcCookie = getCookie(this.cookieName)
-    if (!oidcCookie) throw new Error("No OIDC cookie")
-
-    const { id_token } = JSON.parse(oidcCookie)
+    const tokens = this.getTokens()
 
     const logoutUrl = new URL(end_session_endpoint)
 
-    logoutUrl.searchParams.append("id_token_hint", id_token)
+    if (tokens?.id_token)
+      logoutUrl.searchParams.append("id_token_hint", tokens.id_token)
 
-    removeCookie(this.cookieName)
+    this.removeTokens()
 
-    window.location.href = logoutUrl.toString()
+    this.redirect(logoutUrl.toString())
   }
 }
