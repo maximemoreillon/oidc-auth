@@ -1,5 +1,7 @@
 // Crypto module not available in insecure contexts, replaced with CryptoJS
-import CryptoJS from "crypto-js"
+// Only the modules needed are imported, to keep the rest of CryptoJS out of bundles
+import sha256 from "crypto-js/sha256.js"
+import Base64 from "crypto-js/enc-base64.js"
 
 function generateCodeVerifier(length: number) {
   const array = new Uint8Array(length)
@@ -7,9 +9,9 @@ function generateCodeVerifier(length: number) {
   return Array.from(array, (byte) => (byte % 36).toString(36)).join("")
 }
 
-function generatePkceChallenge(verifier: string) {
-  const hash = CryptoJS.SHA256(verifier)
-  const base64 = CryptoJS.enc.Base64.stringify(hash)
+export function generatePkceChallenge(verifier: string) {
+  const hash = sha256(verifier)
+  const base64 = Base64.stringify(hash)
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
 

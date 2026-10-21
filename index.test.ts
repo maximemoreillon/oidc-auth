@@ -523,3 +523,31 @@ describe("logout", () => {
     expect(redirectMock).toHaveBeenCalledWith(oidcConfig.end_session_endpoint)
   })
 })
+
+describe("corrupted storage", () => {
+  it("discards unreadable tokens instead of failing on every load", async () => {
+    localStorage.setItem("oidc", '{"access_token": "a1", "refr')
+
+    expect(await newClient().init(false)).toBeUndefined()
+    expect(localStorage.getItem("oidc")).toBeNull()
+  })
+
+  it("sends the user to login when enforced", async () => {
+    localStorage.setItem("oidc", "not json")
+
+    await newClient().init(true)
+
+    await vi.waitFor(() => expect(redirectMock).toHaveBeenCalledOnce())
+    expect(redirectMock.mock.calls[0][0]).toContain(
+      oidcConfig.authorization_endpoint
+    )
+  })
+
+  it("can still log out", async () => {
+    localStorage.setItem("oidc", "not json")
+    const client = await createClient()
+
+    expect(() => client.logout()).not.toThrow()
+    expect(redirectMock).toHaveBeenCalledWith(oidcConfig.end_session_endpoint)
+  })
+})

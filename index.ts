@@ -320,7 +320,15 @@ export default class {
     const stored =
       localStorage.getItem(this.storageKey) ?? this.migrateLegacyCookie()
     if (!stored) return null
-    return JSON.parse(stored)
+
+    try {
+      return JSON.parse(stored)
+    } catch (error) {
+      // Otherwise every page load would fail until the user clears site data
+      console.error("Discarding unreadable tokens", error)
+      localStorage.removeItem(this.storageKey)
+      return null
+    }
   }
 
   // Up to v3, tokens were stored in a cookie: move them to localStorage so users stay logged in
