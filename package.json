@@ -16,6 +16,10 @@
   "author": "",
   "license": "ISC",
   "description": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maximemoreillon/oidc-auth.git"
+  },
   "dependencies": {
     "crypto-js": "^4.2.0"
   },
