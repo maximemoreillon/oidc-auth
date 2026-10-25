@@ -1,13 +1,34 @@
 # OIDC Auth
 
-A simple class that enforces authentication using OpenID Connect / Oauth2.0
+A framework-agnostic browser client for OpenID Connect / OAuth 2.0 authentication (authorization code flow with PKCE).
+
+## Why this package exists
+
+This package exists to cover apps **served over plain HTTP**, for example on a local network or behind a reverse proxy that doesn't terminate TLS. Browsers only expose `crypto.subtle` on HTTPS pages and `localhost`, so mainstream OIDC clients that rely on it to compute the PKCE challenge fail on such pages. This package computes it with [crypto-js](https://www.npmjs.com/package/crypto-js) instead (random values still come from `crypto.getRandomValues`, which works on plain HTTP).
+
+If your app is served over HTTPS, a well-established client such as [oidc-client-ts](https://github.com/authts/oidc-client-ts) is a better fit.
+
+## Related packages
+
+| Package                                                                    | For                                     |
+| -------------------------------------------------------------------------- | --------------------------------------- |
+| [@moreillon/oidc-auth](https://www.npmjs.com/package/@moreillon/oidc-auth) | Any browser app (this package)          |
+| [@moreillon/vue-oidc](https://www.npmjs.com/package/@moreillon/vue-oidc)   | Vue 3 single-page apps, built on this package |
+| [@moreillon/nuxt-oidc](https://www.npmjs.com/package/@moreillon/nuxt-oidc) | Nuxt apps                               |
+
+## Installation
+
+```bash
+npm install @moreillon/oidc-auth
+```
 
 ## Usage example
 
 ```ts
 import OidcClient from "@moreillon/oidc-auth"
 
-const { VITE_APP_OIDC_AUTHORITY, VITE_APP_OIDC_CLIENT_ID } = import.meta.env
+const { VITE_OIDC_AUTHORITY, VITE_OIDC_CLIENT_ID, VITE_OIDC_AUDIENCE } =
+  import.meta.env
 
 const oidcClient = new OidcClient({
   redirect_uri: `${window.location.origin}/callback`,
@@ -40,6 +61,30 @@ async function main() {
 
 main()
 ```
+
+At the provider, register a public client (no client secret) with your `redirect_uri` as redirect URI.
+
+## Options
+
+| Option             | Type                     | Description                                                    |
+| ------------------ | ------------------------ | -------------------------------------------------------------- |
+| `authority`        | `string`                 | URL of the OIDC provider (required)                            |
+| `client_id`        | `string`                 | OIDC client ID (required)                                      |
+| `redirect_uri`     | `string`                 | Where the provider redirects after login. Defaults to the origin of the current page |
+| `extraQueryParams` | `Record<string, string>` | Additional query parameters sent to the authorization endpoint |
+
+## API
+
+| Method                       | Description                                                                                                         |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `init(enforce = true)`       | Handle the login callback or load stored tokens. Resolves with `{ tokens, user }` when logged in. When `enforce` is `true`, users who are not logged in are redirected to the provider |
+| `login()`                    | Redirect to the provider's login page, then back to the current page                                                |
+| `logout()`                   | Clear the tokens and log out at the provider                                                                        |
+| `getUser()`                  | Fetch the user info from the provider                                                                               |
+| `refreshAccessToken()`       | Refresh the tokens now                                                                                              |
+| `onTokenRefreshed(handler)`  | Called with the new tokens after every refresh                                                                      |
+| `onRefreshError(handler)`    | Called when the session could not be renewed before the access token expired                                        |
+| `onLogout(handler)`          | Called when the user logged out in another tab, or the provider rejected the tokens                                 |
 
 ## Token refresh
 
